@@ -19,7 +19,7 @@ flowchart TB
     subgraph CloudFront["CloudFront"]
         CF[Distribution]
         CFn[CloudFront Function]
-        L404[Lambda@Edge 404 Resolver]
+        L404Resolver["Lambda@Edge 404 Resolver"]
     end
     
     subgraph S3["S3 Origin"]
@@ -32,8 +32,8 @@ flowchart TB
     CF -->|"viewer-request"| CFn
     CFn -->|"rewrite: tenant + branch"| CF
     CF -->|"origin request"| S3
-    S3 -->|"HTML 404/403 miss"| L404
-    L404 -->|"redirect to closest 404.html"| CF
+    S3 -->|"HTML 404/403 miss"| L404Resolver
+    L404Resolver -->|"redirect to closest 404.html"| CF
     CF -->|"response"| V
 ```
 
