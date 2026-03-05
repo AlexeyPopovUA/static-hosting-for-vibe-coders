@@ -32,12 +32,14 @@ flowchart TB
     CF -->|"viewer-request"| CFn
     CFn -->|"rewrite: tenant + branch"| CF
     CF -->|"origin request"| S3
-    S3 -->|"HTML 404/403 miss"| L404Resolver
-    L404Resolver -->|"redirect to closest 404.html"| CF
+    S3 -->|"origin-response"| L404Resolver
+    L404Resolver -->|"serve closest 404.html or pass-through"| CF
     CF -->|"response"| V
 ```
 
 **Key decision**: Use CloudFront Functions for subdomain URI rewriting, and use Lambda@Edge (origin-response) only for hierarchical 404 handling of HTML/navigation misses (closest branch/tenant/global 404 page). Non-HTML assets (`js`, `css`, images, fonts, etc.) keep plain origin/default `404` responses. Lambda@Edge remains optional for future basic auth.
+
+**Important**: Do NOT configure CloudFront custom error responses on the distribution — they would conflict with the Lambda@Edge 404 resolver.
 
 ---
 
@@ -94,8 +96,8 @@ For missing objects, use closest 404 redirect only for HTML/navigation requests.
    - `/{tenant}/{branch}/404.html` (branch-level)
    - `/{tenant}/404.html` (tenant-level)
    - `/404.html` (global fallback, optional but recommended)
-4. Check candidate existence in S3 (e.g. `HeadObject`; optional prefix existence check with `ListObjectsV2`).
-5. Redirect HTML/navigation miss to first existing candidate (`302`). If none exists, return original `404/403`.
+4. Check candidate existence in S3 (`HeadObject`).
+5. Fetch the first existing candidate (`GetObject`) and return its body inline as the Lambda@Edge generated response with **status `404`** and `Content-Type: text/html`. This avoids a redirect (no URL change, no extra round trip, no SEO issues). Lambda@Edge generated response body limit is 1 MB — sufficient for error pages. If no candidate exists, return the original `404/403`.
 
 ### Safe Branch and Tenant Names
 
@@ -206,7 +208,7 @@ Document all aspects:
 - **Environments**: Dev/staging (optional), production
 - **Configuration**: Domain, certificate, hosted zone (import or create)
 - **Tagging**: `Project`, `Environment`, `ManagedBy` (CDK)
-- **Security**: OAI for S3, no public bucket access
+- **Security**: OAC for S3, no public bucket access
 - **CI/CD**: GitHub Actions, OIDC, path triggers
 
 ### 1.2 Bootstrap project
@@ -224,7 +226,8 @@ Document all aspects:
 
 ### 2.1 `StaticHostingBucket` construct
 
-- S3 bucket, block public access, OAI for CloudFront
+- S3 bucket, block public access, Origin Access Control (OAC) for CloudFront
+- Use `S3BucketOrigin.withOriginAccessControl()` (not legacy OAI)
 - Optional `removalPolicy`, `bucketName` prefix
 - Tags: `Project`, `Environment`
 
@@ -244,7 +247,7 @@ Document all aspects:
 ### 2.3 `SubdomainRoutingDistribution` construct
 
 - CloudFront Distribution
-- Origin: S3 via OAI (from `StaticHostingBucket`)
+- Origin: S3 via OAC (from `StaticHostingBucket`)
 - Default behavior: GET/HEAD/OPTIONS, viewer-request CloudFront Function
 - **Cache policy**: Custom policy — HTML (`*.html`, `/`) short TTL (e.g. 5 min); static assets long TTL (1 year). Use `CachePolicy` with `minTtl`, `maxTtl`, `defaultTtl`; consider `CachePolicy.fromCachePolicyId` for `CachingOptimized` on static paths, or single policy with `defaultTtl: 300` for HTML-heavy SPAs
 - Domain names: `*.demo.oleksiipopov.com`, `*.dev.demo.oleksiipopov.com` (configurable)
@@ -254,7 +257,10 @@ Document all aspects:
   2. `/{tenant}/404.html` (tenant-level)
   3. `/404.html` (global fallback)
   If none exists, return original `404/403`
-- **Implementation note**: Lambda@Edge should skip redirect for non-HTML assets and return plain `404/403`; for HTML/navigation it checks S3 object existence (`HeadObject`, optional `ListObjectsV2`) before selecting redirect target
+- **Implementation note**: Lambda@Edge skips non-HTML assets (returns plain `404/403`). For HTML/navigation: checks candidate existence (`HeadObject`), fetches the first match (`GetObject`), and returns its body inline as a generated response with status `404` and `Content-Type: text/html` (no redirect). Body limit: 1 MB (sufficient for error pages)
+- **Tenant/branch resolution**: Lambda@Edge parses tenant and branch from the **rewritten URI** (e.g. `/{tenant}/{branch}/path`), not the Host header, since the CloudFront Function has already rewritten it
+- **Lambda@Edge permissions**: The closest-404 resolver's execution role needs `s3:GetObject` and `s3:HeadObject` on the hosting bucket (for candidate existence checks and body fetching). Grant via `bucket.grantRead(closest404Function)`
+- **Lambda@Edge region**: Must be deployed in `us-east-1`. Use `cloudfront.experimental.EdgeFunction` (CDK handles cross-region deployment automatically)
 - **Output**: Write `distributionId` to SSM parameter `/static-hosting/distribution-id` (StringParameter) for invalidation workflow
 
 ### 2.4 `HostingStack` (single stack)
@@ -325,7 +331,7 @@ Document all aspects:
 ### 5.2 `deploy-infra.yml`
 
 - On: push to main, `workflow_dispatch`
-- Paths: `packages/infra/**`, `packages/functions/**` (if any), `.github/workflows/deploy-infra.yml`
+- Paths: `packages/infra/**`, `.github/workflows/deploy-infra.yml`
 - Permissions: `id-token: write`, `contents: read`
 - Steps:
   1. Checkout
