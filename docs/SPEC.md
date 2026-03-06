@@ -3,10 +3,8 @@
 
 ## Single Source of Truth
 
-- Canonical planning document: `/Users/oleksii.popov/projects/static-hosting-for-vibe-coders/docs/SPEC.md`.
-- Deprecated companion document: `/Users/oleksii.popov/.cursor/plans/DNS Wildcard Correction-8360e49e.plan.md` (pointer only, no design content).
+- Canonical planning document: `docs/SPEC.md` (this file).
 - All planning updates must be made in this canonical file only to prevent drift.
-- Canonical execution spec: this `docs/SPEC.md` file is the execution source of truth.
 
 ## Architecture Summary
 
@@ -52,7 +50,7 @@ flowchart TB
 | `{tenant}.{baseDomain}` | `/{tenant}/{mainBranchName}/` | Production (simple subdomain -> main branch content) |
 | `{tenant}--{branch}.dev.{baseDomain}` | `/{tenant}/{branch}/` | Dev (flat subdomain only — single label with `--` separator for wildcard DNS/cert) |
 
-Production uses simple `{tenant}.{baseDomain}` and always resolves to `{mainBranchName}` (default `main`). Dev uses flat subdomains (`{tenant}--{branch}`) so the dev host is a single label, enabling `*.dev.{baseDomain}` wildcard and ACM cert; parsed branch resolves to `/{tenant}/{branch}/`.
+Production uses simple `{tenant}.{baseDomain}` and always resolves to `{mainBranchName}` (default `main`). **Known limitation**: `mainBranchName` is a global setting — all tenants share the same production branch name. Dev uses flat subdomains (`{tenant}--{branch}`) so the dev host is a single label, enabling `*.dev.{baseDomain}` wildcard and ACM cert; parsed branch resolves to `/{tenant}/{branch}/`.
 
 **Examples** (base domain `demo.oleksiipopov.com`):
 
@@ -99,6 +97,8 @@ For missing objects, use closest 404 redirect only for HTML/navigation requests.
 4. Check candidate existence in S3 (`HeadObject`).
 5. Fetch the first existing candidate (`GetObject`) and return its body inline as the Lambda@Edge generated response with **status `404`** and `Content-Type: text/html`. This avoids a redirect (no URL change, no extra round trip, no SEO issues). Lambda@Edge generated response body limit is 1 MB — sufficient for error pages. If no candidate exists, return the original `404/403`.
 
+**SPA fallback**: For single-page apps with client-side routing, tenants should use their branch-level `404.html` as the SPA entry point (same content as `index.html`). The closest-404 resolver will serve it for any unmatched HTML path, preserving the original URL.
+
 ### Safe Branch and Tenant Names
 
 **Branch name** (used in dev subdomain and S3 path):
@@ -127,10 +127,10 @@ For missing objects, use closest 404 redirect only for HTML/navigation requests.
   - HTML: `Cache-Control: max-age=0, s-maxage=300, stale-while-revalidate=60`
   - Static assets: `Cache-Control: max-age=31536000, immutable`
 - **Error handling split**:
-  - HTML/navigation misses: closest-404 inline body flow (Lambda@Edge)
-  - Non-HTML misses: plain origin/default `404` response
+  - HTML/navigation misses: closest-404 inline body served by Lambda@Edge
+  - Non-HTML misses: plain origin `404` response (no Lambda@Edge intervention)
 - **Error caching**: Keep `403/404` error caching TTL very low (`0–10s`) so newly uploaded `404.html` pages are picked up quickly
-- **Invalidation**: Use path patterns `/{tenant}/{mainBranchName}/*` + `/{tenant}/404.html` (production) or `/{tenant}/{branch}/*` + `/{tenant}/404.html` (specific branch)
+- **Invalidation**: Use path patterns `/{tenant}/{mainBranchName}/*` + `/{tenant}/404.html` (production) or `/{tenant}/{branch}/*` + `/{tenant}/404.html` (specific branch). To invalidate the global fallback, use `/404.html` separately
 
 ---
 
@@ -202,7 +202,7 @@ Document all aspects:
 - **Architecture**: Diagram, components, data flow
 - **URL structure**: Production (`{tenant}.{baseDomain}`), dev (`{tenant}--{branch}.dev.{baseDomain}`) — flat subdomains for dev only (wildcard DNS/cert)
 - **S3 layout**: `/{tenant}/{mainBranchName}/` (prod), `/{tenant}/{branch}/` (branch preview)
-- **404 handling**: For HTML/navigation requests, redirect to closest available 404 page (`/{tenant}/{branch}/404.html` -> `/{tenant}/404.html` -> `/404.html`); for non-HTML resources, return plain `404`
+- **404 handling**: For HTML/navigation requests, serve closest available 404 page inline (`/{tenant}/{branch}/404.html` -> `/{tenant}/404.html` -> `/404.html`); for non-HTML resources, return plain `404`
 - **Validation**: Branch and tenant name rules (regex, length 1–63)
 - **Caching**: CloudFront cache policy (HTML vs static assets)
 - **Invalidation**: Manual workflow for tenant/branch, optional wait
@@ -253,7 +253,7 @@ Document all aspects:
 - **Cache policy**: Custom policy — HTML (`*.html`, `/`) short TTL (e.g. 5 min); static assets long TTL (1 year). Use `CachePolicy` with `minTtl`, `maxTtl`, `defaultTtl`; consider `CachePolicy.fromCachePolicyId` for `CachingOptimized` on static paths, or single policy with `defaultTtl: 300` for HTML-heavy SPAs
 - Domain names: `*.demo.oleksiipopov.com`, `*.dev.demo.oleksiipopov.com` (configurable)
 - Certificate: ACM (us-east-1), DNS validation, include both wildcards
-- **Closest 404 resolver**: Attach Lambda@Edge (origin-response) to handle HTML/navigation `404/403` from S3 and redirect to nearest existing 404 page by host context:
+- **Closest 404 resolver**: Attach Lambda@Edge (origin-response) to handle HTML/navigation `404/403` from S3 and serve the nearest existing 404 page inline:
   1. `/{tenant}/{branch}/404.html` (branch-level; prod uses `{mainBranchName}`)
   2. `/{tenant}/404.html` (tenant-level)
   3. `/404.html` (global fallback)
@@ -411,6 +411,8 @@ Document all aspects:
 - **Basic auth with Lambda@Edge**: Requires Lambda@Edge (origin-request), DynamoDB/SSM for credentials. Defer to Phase 2.
 - **Multi-environment**: Single stack for now; add `Environment` prop later.
 - **Sample tenant content**: Add `/example1/main/index.html` etc. manually or via separate deploy script.
+- **Observability**: CloudWatch alarms for Lambda@Edge errors, S3 access logging, CloudFront access logs.
+- **Per-tenant `mainBranchName`**: Currently global; per-tenant override would require a config lookup (e.g. DynamoDB/SSM) in the CloudFront Function.
 
 ---
 
