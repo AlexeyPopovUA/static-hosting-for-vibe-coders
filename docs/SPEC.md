@@ -94,7 +94,7 @@ Production uses simple `{app}.{baseDomain}` and always resolves to `{mainBranchN
 
 ### Closest 404 Resolution
 
-For missing objects, use closest 404 redirect only for HTML/navigation requests. Non-HTML resource misses should return regular `404` without redirect:
+For missing objects, serve the closest 404 page inline for HTML/navigation requests only. Non-HTML resource misses return a regular `404` without intervention:
 
 1. Resolve `app` and `branch` from subdomain (prod uses `{mainBranchName}`, dev uses parsed `{branch}` from `{app}--{branch}`).
 2. Detect request type:
@@ -125,6 +125,7 @@ The platform supports all common routing strategies without per-app configuratio
 - **Length**: 1–63 characters (DNS label limit)
 - **Pattern**: No leading/trailing hyphen; must not contain `--` (reserved as app--branch separator)
 - **Regex**: `^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$` and `!name.includes('--')`
+- **Sanitization**: Git branch names are sanitized before use — lowercase, replace any run of unsupported characters (`/`, `_`, `.`, etc.) with a single `-`, strip leading/trailing `-`, truncate to 63 chars. Examples: `feature/login` → `feature-login`, `Feature/New__UI` → `feature-new-ui`, `fix/bug...#123` → `fix-bug-123`. The deploy workflow applies this automatically; the validation regex runs after sanitization
 
 **App slug** (used in subdomain and S3 prefix):
 
@@ -203,13 +204,17 @@ jobs:
 | `output-dir` | no | `dist` | Directory containing build output |
 | `branch` | no | `github.ref_name` | Branch name for S3 prefix (auto-derived from PR head or push ref) |
 
+### Requirements
+
+App repos must use **pnpm** as their package manager (platform convention for simplicity).
+
 ### Steps
 
 1. Checkout the calling app repo
 2. Setup Node.js (asdf or `actions/setup-node`)
 3. Install dependencies (`pnpm install --frozen-lockfile`)
 4. Run build command
-5. Validate `app-slug` and `branch` with `validation.ts`
+5. Sanitize `branch` and validate `app-slug` and sanitized branch with `validation.ts`
 6. Configure AWS credentials (OIDC)
 7. `aws s3 sync --delete {output-dir}/ s3://{bucket}/{app-slug}/{branch}/`
 8. Trigger CloudFront invalidation (call `invalidate-app.yml` or inline)
@@ -270,6 +275,8 @@ static-hosting-for-vibe-coders/
 │       ├── deploy-infra.yml
 │       ├── validate-infra.yml
 │       ├── deploy-app.yml                 # Reusable workflow for app repos
+│       ├── cleanup-branch.yml             # Reusable workflow for branch removal
+│       ├── cleanup-app.yml                # Manual workflow for full app removal
 │       └── invalidate-app.yml             # Manual invalidation for app/branch
 ├── package.json
 ├── pnpm-workspace.yaml
@@ -371,7 +378,8 @@ Document all aspects:
 
 - `packages/infra/src/lib/validation.ts`:
   - `SAFE_LABEL_REGEX = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/`
-  - `validateBranchName(name: string): void` — throws if invalid (regex + no `--`)
+  - `sanitizeBranchName(name: string): string` — lowercase, replace runs of unsupported chars with `-`, strip leading/trailing `-`, truncate to 63 chars
+  - `validateBranchName(name: string): void` — throws if invalid (regex + no `--`); runs after sanitization
   - `validateAppSlug(slug: string): void` — throws if invalid (regex + no `--`)
   - `isValidBranchName(name: string): boolean` — for CloudFront Function (or use in CI only; CF runs ES5.1)
 - Reusable by: invalidation workflow, deploy scripts, deploy-app workflow, and closest-404 Lambda@Edge (TypeScript contexts)
@@ -478,11 +486,58 @@ Document all aspects:
 
 ---
 
+## Phase 5.7: Cleanup Workflows
+
+### `cleanup-branch.yml`
+
+Reusable workflow (`workflow_call`) that app repos trigger when a branch is merged or deleted. Removes the branch's S3 directory and invalidates the cache.
+
+- **Trigger**: `workflow_call` with inputs: `app-slug` (required), `branch` (required)
+- **Usage from app repo**:
+  ```yaml
+  on:
+    delete:
+    pull_request:
+      types: [closed]
+
+  jobs:
+    cleanup:
+      if: github.event.ref_type == 'branch' || github.event.pull_request.merged
+      uses: <org>/static-hosting-for-vibe-coders/.github/workflows/cleanup-branch.yml@main
+      with:
+        app-slug: my-app
+        branch: ${{ github.event.ref || github.head_ref }}
+      secrets: inherit
+  ```
+- **Steps**:
+  1. Sanitize `branch` and validate `app-slug` and sanitized branch
+  2. Configure AWS credentials (OIDC)
+  3. Get bucket name from SSM
+  4. `aws s3 rm --recursive s3://{bucket}/{app-slug}/{branch}/`
+  5. Invalidate `/{app-slug}/{branch}/*`
+
+**Commit**: `ci: add cleanup-branch workflow for stale branch removal`
+
+### `cleanup-app.yml`
+
+Manual workflow (`workflow_dispatch`) to remove all files for an app when its repo is deleted or archived.
+
+- **Trigger**: `workflow_dispatch` with input: `app-slug` (required)
+- **Steps**:
+  1. Validate `app-slug`
+  2. Configure AWS credentials (OIDC)
+  3. Get bucket name from SSM
+  4. `aws s3 rm --recursive s3://{bucket}/{app-slug}/`
+  5. Invalidate `/{app-slug}/*`
+- **Safety**: Requires manual trigger — no automation to prevent accidental deletion of an entire app
+
+**Commit**: `ci: add cleanup-app workflow for app removal`
+
+---
+
 ## Phase 6: Configuration and Documentation
 
 - `packages/infra/src/config.ts`: central config for `domainName`, `mainBranchName`, `hostedZoneId`, `certificateArn`
-- Implementation handoff at execution start: copy this canonical plan into `static-hosting-for-vibe-coders/docs/SPEC.md` as the working spec.
-- After handoff, treat `docs/SPEC.md` as the implementation source of truth; update plan files only for archival notes.
 - Update `docs/SPEC.md` with final structure, env vars, deployment steps
 - `README.md`: quick start, prerequisites, deployment
 
@@ -500,6 +555,8 @@ Document all aspects:
 | `packages/infra/src/lib/stacks/hosting-stack.ts` | Main CDK stack composing all constructs |
 | `.github/workflows/deploy-infra.yml` | CI/CD — OIDC, asdf, pnpm cache, CDK deploy |
 | `.github/workflows/deploy-app.yml` | Reusable workflow — build, deploy, invalidate, PR preview comment |
+| `.github/workflows/cleanup-branch.yml` | Reusable workflow — remove branch files from S3 on merge/delete |
+| `.github/workflows/cleanup-app.yml` | Manual workflow — remove all app files from S3 |
 | `.github/workflows/invalidate-app.yml` | Manual/callable invalidation for app/branch |
 
 ---
@@ -539,7 +596,9 @@ Document all aspects:
 10. `ci: add validate-infra and deploy-infra workflows`
 11. `ci: add invalidate-app workflow for CloudFront cache invalidation`
 12. `ci: add reusable deploy-app workflow for app repos`
-13. `docs: add configuration and deployment guide`
+13. `ci: add cleanup-branch workflow for stale branch removal`
+14. `ci: add cleanup-app workflow for app removal`
+15. `docs: add configuration and deployment guide`
 
 ---
 
