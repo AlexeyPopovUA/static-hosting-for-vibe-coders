@@ -119,15 +119,17 @@ For missing objects, use closest 404 redirect only for HTML/navigation requests.
 
 ## CloudFront Caching
 
-- **Cache policy**: Custom policy with:
-  - HTML: `max-age=0, s-maxage=300, stale-while-revalidate=60` (short TTL for index.html)
-  - `404.html`: same short TTL policy as HTML
-  - Static assets (`.js`, `.css`, `.png`, etc.): `max-age=31536000, immutable`
+- **CloudFront cache policy** (controls edge TTL via `CachePolicy`):
+  - HTML / `404.html`: `defaultTtl: 300s`, `minTtl: 0`, `maxTtl: 300s` (short edge TTL)
+  - Static assets (`.js`, `.css`, `.png`, etc.): use managed `CachingOptimized` policy (default TTL 24h, max 1yr) or a custom policy with `defaultTtl: 86400s`, `maxTtl: 31536000s`
+  - Consider a separate cache behavior for `/*.html` with the short-TTL policy
+- **Origin response headers** (controls browser caching — set by tenant's files or overridden via a CloudFront response headers policy):
+  - HTML: `Cache-Control: max-age=0, s-maxage=300, stale-while-revalidate=60`
+  - Static assets: `Cache-Control: max-age=31536000, immutable`
 - **Error handling split**:
-  - HTML/navigation misses: closest-404 redirect flow
-  - Non-HTML misses: plain origin/default `404` response (no redirect)
-- **Error caching**: Keep HTML-related `403/404` caching TTL very low (`0-10s`) so newly uploaded tenant/branch `404.html` pages are picked up quickly; keep non-HTML miss handling simple (default response behavior is acceptable)
-- **Behavior**: Default behavior uses cache policy; consider separate behavior for `/*.html` with shorter TTL
+  - HTML/navigation misses: closest-404 inline body flow (Lambda@Edge)
+  - Non-HTML misses: plain origin/default `404` response
+- **Error caching**: Keep `403/404` error caching TTL very low (`0–10s`) so newly uploaded `404.html` pages are picked up quickly
 - **Invalidation**: Use path patterns `/{tenant}/{mainBranchName}/*` + `/{tenant}/404.html` (production) or `/{tenant}/{branch}/*` + `/{tenant}/404.html` (specific branch)
 
 ---
@@ -242,7 +244,6 @@ Document all aspects:
   3. Rewrite `request.uri`: prefix with S3 path; for navigation requests (no file extension), append `/index.html`
   4. FILE_REGEX: `/\\.(html?|css|js|png|jpg|jpeg|gif|ico|svg|woff2?|ttf|eot)(\\?.*)?$/i` or similar
 - File: `packages/infra/src/functions/subdomain-routing/index.js`
-- Reference: `me/cloud/stacks/front-end/cf-fn-viewer-request.js` pattern
 
 ### 2.3 `SubdomainRoutingDistribution` construct
 
@@ -288,7 +289,8 @@ Document all aspects:
   - `validateBranchName(name: string): void` — throws if invalid (regex + no `--`)
   - `validateTenantId(id: string): void` — throws if invalid (regex + no `--`)
   - `isValidBranchName(name: string): boolean` — for CloudFront Function (or use in CI only; CF runs ES5.1)
-- Reusable by: invalidation workflow, deploy scripts, CloudFront Function, and closest-404 Lambda@Edge
+- Reusable by: invalidation workflow, deploy scripts, and closest-404 Lambda@Edge (TypeScript contexts)
+- **CloudFront Function caveat**: CF Functions run ES5.1 with no module imports — the validation regex must be **duplicated** inline in `subdomain-routing/index.js`. Add a shared test that verifies both copies accept/reject the same inputs to prevent drift
 
 **Commit**: `feat(infra): add validation for branch and tenant names`
 
@@ -384,11 +386,11 @@ Document all aspects:
 
 | File | Purpose |
 |------|---------|
-| `experiment/.github/workflows/deploy-infra.yml` | OIDC, asdf, pnpm cache, path triggers |
-| `experiment/.tool-versions` | nodejs 24.11.1, pnpm 10.26.1 |
-| `me/cloud/stacks/front-end/cf-fn-viewer-request.js` | Subdomain routing logic (CloudFront Function) |
-| `packages/infra/src/functions/closest-404/index.ts` | Hierarchical 404 redirect resolver (Lambda@Edge) |
-| `me/cloud/stacks/front-end/front-end-hosting-stack.ts` | CloudFront + S3 + CF Function pattern |
+| `packages/infra/src/lib/validation.ts` | Branch/tenant name validation (shared by CDK, scripts, Lambda@Edge) |
+| `packages/infra/src/functions/subdomain-routing/index.js` | CloudFront Function — subdomain URI rewriting (ES5.1) |
+| `packages/infra/src/functions/closest-404/index.ts` | Lambda@Edge — hierarchical 404 resolver (origin-response) |
+| `packages/infra/src/lib/stacks/hosting-stack.ts` | Main CDK stack composing all constructs |
+| `.github/workflows/deploy-infra.yml` | CI/CD — OIDC, asdf, pnpm cache, CDK deploy |
 
 ---
 
