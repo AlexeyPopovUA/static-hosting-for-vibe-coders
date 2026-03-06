@@ -431,7 +431,7 @@ Document all aspects:
 - Steps:
   1. Checkout
   2. `asdf-vm/actions/install@v4` (uses `.tool-versions`)
-  3. pnpm cache (same pattern as experiment)
+  3. pnpm store cache
   4. `pnpm install --frozen-lockfile`
   5. `pnpm type-check`
   6. `aws-actions/configure-aws-credentials@v4` with `role-to-assume: ${{ vars.AWS_AUTH_ROLE }}`, `aws-region: us-east-1`
@@ -475,7 +475,7 @@ Document all aspects:
   2. Setup Node.js (asdf or `actions/setup-node`)
   3. `pnpm install --frozen-lockfile`
   4. Run `build-command`
-  5. Validate `app-slug` and `branch` (inline or via `validate-names.ts`)
+  5. Sanitize `branch` and validate `app-slug` and sanitized branch (inline or via `validate-names.ts`)
   6. Configure AWS credentials (OIDC)
   7. Get bucket name from SSM: `aws ssm get-parameter --name /static-hosting/bucket-name`
   8. `aws s3 sync --delete {output-dir}/ s3://{bucket}/{app-slug}/{branch}/`
