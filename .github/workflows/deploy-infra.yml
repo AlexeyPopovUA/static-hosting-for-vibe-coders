@@ -1,0 +1,62 @@
+name: Deploy Infra
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/infra/**'
+      - '.github/workflows/deploy-infra.yml'
+      - 'mise.toml'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - 'pnpm-workspace.yaml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm type-check
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_AUTH_ROLE }}
+          aws-region: us-east-1
+
+      - name: CDK deploy
+        working-directory: packages/infra
+        run: pnpm cdk deploy --require-approval never
+        env:
+          HOSTING_DOMAIN_NAME: ${{ vars.HOSTING_DOMAIN_NAME }}
+          HOSTING_MAIN_BRANCH: ${{ vars.HOSTING_MAIN_BRANCH }}
+          HOSTING_HOSTED_ZONE_ID: ${{ vars.HOSTING_HOSTED_ZONE_ID }}
+          HOSTING_CERTIFICATE_ARN: ${{ vars.HOSTING_CERTIFICATE_ARN }}
+          HOSTING_ENVIRONMENT: ${{ vars.HOSTING_ENVIRONMENT }}

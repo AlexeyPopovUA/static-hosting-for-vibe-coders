@@ -1,0 +1,71 @@
+name: Cleanup Branch
+
+on:
+  workflow_call:
+    inputs:
+      app-slug:
+        required: true
+        type: string
+      branch:
+        required: true
+        type: string
+      platform-repository:
+        required: false
+        type: string
+        default: AlexeyPopovUA/static-hosting-for-vibe-coders
+      platform-ref:
+        required: false
+        type: string
+        default: main
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout platform scripts
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.platform-repository }}
+          ref: ${{ inputs.platform-ref }}
+          path: .
+
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate names
+        working-directory: packages/infra
+        run: |
+          SANITIZED=$(pnpm exec tsx src/scripts/validate-names.ts \
+            --app "${{ inputs.app-slug }}" \
+            --branch "${{ inputs.branch }}" \
+            --print-sanitized-branch)
+          echo "SANITIZED_BRANCH=$SANITIZED" >> "$GITHUB_ENV"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_AUTH_ROLE }}
+          aws-region: us-east-1
+
+      - name: Remove branch files from S3
+        env:
+          APP_SLUG: ${{ inputs.app-slug }}
+        run: |
+          BUCKET=$(aws ssm get-parameter --name /static-hosting/bucket-name --query Parameter.Value --output text)
+          aws s3 rm "s3://${BUCKET}/${APP_SLUG}/${SANITIZED_BRANCH}/" --recursive
+
+      - name: Invalidate CloudFront cache
+        env:
+          APP_SLUG: ${{ inputs.app-slug }}
+        run: |
+          DIST_ID=$(aws ssm get-parameter --name /static-hosting/distribution-id --query Parameter.Value --output text)
+          aws cloudfront create-invalidation \
+            --distribution-id "$DIST_ID" \
+            --paths "/${APP_SLUG}/${SANITIZED_BRANCH}/*"

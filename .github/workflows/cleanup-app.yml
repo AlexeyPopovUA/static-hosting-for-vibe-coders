@@ -1,0 +1,51 @@
+name: Cleanup App
+
+on:
+  workflow_dispatch:
+    inputs:
+      app-slug:
+        description: App slug to remove entirely
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate app slug
+        run: pnpm validate:names --app "${{ inputs.app-slug }}"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_AUTH_ROLE }}
+          aws-region: us-east-1
+
+      - name: Remove app files from S3
+        env:
+          APP_SLUG: ${{ inputs.app-slug }}
+        run: |
+          BUCKET=$(aws ssm get-parameter --name /static-hosting/bucket-name --query Parameter.Value --output text)
+          aws s3 rm "s3://${BUCKET}/${APP_SLUG}/" --recursive
+
+      - name: Invalidate CloudFront cache
+        env:
+          APP_SLUG: ${{ inputs.app-slug }}
+        run: |
+          DIST_ID=$(aws ssm get-parameter --name /static-hosting/distribution-id --query Parameter.Value --output text)
+          aws cloudfront create-invalidation \
+            --distribution-id "$DIST_ID" \
+            --paths "/${APP_SLUG}/*"

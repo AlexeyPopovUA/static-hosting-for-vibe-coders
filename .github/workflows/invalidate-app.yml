@@ -1,0 +1,113 @@
+name: Invalidate App Cache
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: App slug
+        required: true
+        type: string
+      branch:
+        description: Branch name (omit for production/main)
+        required: false
+        type: string
+      wait:
+        description: Wait until invalidation completes
+        required: false
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      app:
+        required: true
+        type: string
+      branch:
+        required: false
+        type: string
+      wait:
+        required: false
+        type: boolean
+        default: false
+      main-branch:
+        required: false
+        type: string
+        default: main
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  invalidate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate names
+        run: |
+          ARGS=(--app "${{ inputs.app }}")
+          if [ -n "${{ inputs.branch }}" ]; then
+            ARGS+=(--branch "${{ inputs.branch }}")
+          fi
+          pnpm validate:names "${ARGS[@]}"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_AUTH_ROLE }}
+          aws-region: us-east-1
+
+      - name: Resolve invalidation paths
+        id: paths
+        env:
+          APP: ${{ inputs.app }}
+          BRANCH: ${{ inputs.branch }}
+          MAIN_BRANCH: ${{ inputs.main-branch || vars.HOSTING_MAIN_BRANCH || 'main' }}
+        run: |
+          if [ -n "$BRANCH" ]; then
+            SANITIZED=$(pnpm validate:names --app "$APP" --branch "$BRANCH" --print-sanitized-branch)
+            echo "path1=/${APP}/${SANITIZED}/*" >> "$GITHUB_OUTPUT"
+          else
+            echo "path1=/${APP}/${MAIN_BRANCH}/*" >> "$GITHUB_OUTPUT"
+          fi
+          echo "path2=/${APP}/404.html" >> "$GITHUB_OUTPUT"
+
+      - name: Create invalidation
+        id: invalidation
+        run: |
+          DIST_ID=$(aws ssm get-parameter --name /static-hosting/distribution-id --query Parameter.Value --output text)
+          INVALIDATION_ID=$(aws cloudfront create-invalidation \
+            --distribution-id "$DIST_ID" \
+            --paths "${{ steps.paths.outputs.path1 }}" "${{ steps.paths.outputs.path2 }}" \
+            --query Invalidation.Id \
+            --output text)
+          echo "invalidation_id=$INVALIDATION_ID" >> "$GITHUB_OUTPUT"
+          echo "distribution_id=$DIST_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for invalidation
+        if: inputs.wait
+        run: |
+          TIMEOUT=300
+          ELAPSED=0
+          while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+            STATUS=$(aws cloudfront get-invalidation \
+              --distribution-id "${{ steps.invalidation.outputs.distribution_id }}" \
+              --id "${{ steps.invalidation.outputs.invalidation_id }}" \
+              --query Invalidation.Status \
+              --output text)
+            if [ "$STATUS" = "Completed" ]; then
+              echo "Invalidation completed"
+              exit 0
+            fi
+            sleep 10
+            ELAPSED=$((ELAPSED + 10))
+          done
+          echo "Invalidation timed out after ${TIMEOUT}s"
+          exit 1

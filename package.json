@@ -1,0 +1,15 @@
+{
+  "name": "static-hosting-for-vibe-coders",
+  "private": true,
+  "engines": {
+    "node": ">=24",
+    "pnpm": ">=10"
+  },
+  "scripts": {
+    "type-check": "pnpm --filter @static-hosting/infra type-check",
+    "test": "pnpm --filter @static-hosting/infra test",
+    "cdk": "pnpm --filter @static-hosting/infra cdk",
+    "cdk:synth": "pnpm --filter @static-hosting/infra cdk synth",
+    "validate:names": "pnpm --filter @static-hosting/infra validate:names"
+  }
+}

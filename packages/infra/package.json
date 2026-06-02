@@ -1,0 +1,27 @@
+{
+  "name": "@static-hosting/infra",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "infra": "src/bin/app.ts"
+  },
+  "scripts": {
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "cdk": "cdk",
+    "validate:names": "tsx src/scripts/validate-names.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.830.0",
+    "aws-cdk-lib": "^2.200.0",
+    "constructs": "^10.4.2"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.149",
+    "@types/node": "^24.0.0",
+    "aws-cdk": "^2.200.0",
+    "esbuild": "^0.25.5",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

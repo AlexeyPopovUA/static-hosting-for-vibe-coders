@@ -1,0 +1,128 @@
+name: Deploy App
+
+on:
+  workflow_call:
+    inputs:
+      app-slug:
+        required: true
+        type: string
+      build-command:
+        required: false
+        type: string
+        default: pnpm build
+      output-dir:
+        required: false
+        type: string
+        default: dist
+      branch:
+        required: false
+        type: string
+      base-domain:
+        required: false
+        type: string
+        default: demo.oleksiipopov.com
+      main-branch:
+        required: false
+        type: string
+        default: main
+      platform-repository:
+        required: false
+        type: string
+        default: AlexeyPopovUA/static-hosting-for-vibe-coders
+      platform-ref:
+        required: false
+        type: string
+        default: main
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@v4
+
+      - name: Checkout platform scripts
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.platform-repository }}
+          ref: ${{ inputs.platform-ref }}
+          path: .platform
+
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+
+      - name: Install app dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install platform script dependencies
+        working-directory: .platform
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: ${{ inputs.build-command }}
+
+      - name: Resolve branch
+        id: branch
+        env:
+          INPUT_BRANCH: ${{ inputs.branch }}
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        working-directory: .platform/packages/infra
+        run: |
+          if [ -n "$INPUT_BRANCH" ]; then
+            BRANCH="$INPUT_BRANCH"
+          elif [ -n "$GITHUB_HEAD_REF" ]; then
+            BRANCH="$GITHUB_HEAD_REF"
+          else
+            BRANCH="$GITHUB_REF_NAME"
+          fi
+          SANITIZED=$(pnpm exec tsx src/scripts/validate-names.ts \
+            --app "${{ inputs.app-slug }}" \
+            --branch "$BRANCH" \
+            --print-sanitized-branch)
+          echo "sanitized=$SANITIZED" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_AUTH_ROLE }}
+          aws-region: us-east-1
+
+      - name: Sync to S3
+        env:
+          OUTPUT_DIR: ${{ inputs.output-dir }}
+          APP_SLUG: ${{ inputs.app-slug }}
+          BRANCH: ${{ steps.branch.outputs.sanitized }}
+        run: |
+          BUCKET=$(aws ssm get-parameter --name /static-hosting/bucket-name --query Parameter.Value --output text)
+          aws s3 sync "$OUTPUT_DIR/" "s3://${BUCKET}/${APP_SLUG}/${BRANCH}/" --delete
+
+      - name: Invalidate CloudFront cache
+        env:
+          APP_SLUG: ${{ inputs.app-slug }}
+          BRANCH: ${{ steps.branch.outputs.sanitized }}
+          MAIN_BRANCH: ${{ inputs.main-branch }}
+        run: |
+          DIST_ID=$(aws ssm get-parameter --name /static-hosting/distribution-id --query Parameter.Value --output text)
+          if [ "$BRANCH" = "$MAIN_BRANCH" ] && [ "${{ github.event_name }}" != "pull_request" ]; then
+            PATHS="/${APP_SLUG}/${MAIN_BRANCH}/* /${APP_SLUG}/404.html"
+          else
+            PATHS="/${APP_SLUG}/${BRANCH}/* /${APP_SLUG}/404.html"
+          fi
+          aws cloudfront create-invalidation \
+            --distribution-id "$DIST_ID" \
+            --paths $PATHS
+
+      - name: Post preview URL comment
+        if: github.event_name == 'pull_request'
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            Preview: https://${{ inputs.app-slug }}--${{ steps.branch.outputs.sanitized }}.dev.${{ inputs.base-domain }}
+          edit-mode: replace
