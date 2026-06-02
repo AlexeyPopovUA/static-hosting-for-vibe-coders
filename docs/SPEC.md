@@ -211,7 +211,7 @@ App repos must use **pnpm** as their package manager (platform convention for si
 ### Steps
 
 1. Checkout the calling app repo
-2. Setup Node.js (asdf or `actions/setup-node`)
+2. Setup Node.js (mise or `actions/setup-node`)
 3. Install dependencies (`pnpm install --frozen-lockfile`)
 4. Run build command
 5. Sanitize `branch` and validate `app-slug` and sanitized branch with `validation.ts`
@@ -244,7 +244,7 @@ Uses `peter-evans/create-or-update-comment` or similar action. The comment is up
 
 ```
 static-hosting-for-vibe-coders/
-├── .tool-versions              # ASDF: nodejs 24.x, pnpm latest
+├── mise.toml                   # mise: nodejs 24.x, pnpm latest
 ├── docs/
 │   └── SPEC.md                 # Master specification (all aspects)
 ├── packages/
@@ -307,11 +307,11 @@ Document all aspects:
 ### 1.2 Bootstrap project
 
 - Root `package.json` with `engines`: `node: ">=24"`, `pnpm: ">=10"`
-- `.tool-versions`: `nodejs 24.11.1`, `pnpm 10.26.1` (or latest)
+- `mise.toml`: `nodejs 24.11.1`, `pnpm 10.26.1` (or latest)
 - `pnpm-workspace.yaml`: `packages: ['packages/*']`
 - `packages/infra/`: CDK app, `aws-cdk-lib` latest, `constructs` ^10
 
-**Commit**: `chore: bootstrap project with ASDF, pnpm, and spec`
+**Commit**: `chore: bootstrap project with mise, pnpm, and spec`
 
 ---
 
@@ -420,7 +420,7 @@ Document all aspects:
 
 - On: PR to main, push to main
 - Paths: `packages/infra/**`, `.github/workflows/validate-infra.yml`
-- Steps: checkout, asdf install (from `.tool-versions`), pnpm cache, `pnpm install --frozen-lockfile`, `pnpm type-check`, `pnpm cdk synth` (in packages/infra)
+- Steps: checkout, mise install (from `mise.toml`), pnpm cache, `pnpm install --frozen-lockfile`, `pnpm type-check`, `pnpm cdk synth` (in packages/infra)
 - No AWS credentials needed
 
 ### 5.2 `deploy-infra.yml`
@@ -430,7 +430,7 @@ Document all aspects:
 - Permissions: `id-token: write`, `contents: read`
 - Steps:
   1. Checkout
-  2. `asdf-vm/actions/install@v4` (uses `.tool-versions`)
+  2. `jdx/mise-action@v2` (uses `mise.toml`)
   3. pnpm store cache
   4. `pnpm install --frozen-lockfile`
   5. `pnpm type-check`
@@ -452,7 +452,7 @@ Document all aspects:
 - **Validation**: Run `pnpm run validate:names --app $APP [--branch $BRANCH]` (script in packages/infra that uses `validation.ts`) — fail workflow if invalid
 - **Steps**:
   1. Checkout
-  2. asdf install, pnpm install (or minimal: just Node for aws-cli)
+  2. mise install, pnpm install (or minimal: just Node for aws-cli)
   3. Configure AWS credentials (OIDC)
   4. Get distribution ID from SSM: `aws ssm get-parameter --name /static-hosting/distribution-id`
   5. Compute paths: `/{app}/{mainBranchName}/*` + `/{app}/404.html` or `/{app}/{branch}/*` + `/{app}/404.html`
@@ -472,7 +472,7 @@ Document all aspects:
 - **Permissions**: `id-token: write`, `contents: read`, `pull-requests: write`
 - **Steps**:
   1. Checkout calling repo
-  2. Setup Node.js (asdf or `actions/setup-node`)
+  2. Setup Node.js (mise or `actions/setup-node`)
   3. `pnpm install --frozen-lockfile`
   4. Run `build-command`
   5. Sanitize `branch` and validate `app-slug` and sanitized branch (inline or via `validate-names.ts`)
@@ -553,7 +553,7 @@ Manual workflow (`workflow_dispatch`) to remove all files for an app when its re
 | `packages/infra/src/functions/subdomain-routing/index.js` | CloudFront Function — subdomain URI rewriting (ES5.1) |
 | `packages/infra/src/functions/closest-404/index.ts` | Lambda@Edge — hierarchical 404 resolver (origin-response) |
 | `packages/infra/src/lib/stacks/hosting-stack.ts` | Main CDK stack composing all constructs |
-| `.github/workflows/deploy-infra.yml` | CI/CD — OIDC, asdf, pnpm cache, CDK deploy |
+| `.github/workflows/deploy-infra.yml` | CI/CD — OIDC, mise, pnpm cache, CDK deploy |
 | `.github/workflows/deploy-app.yml` | Reusable workflow — build, deploy, invalidate, PR preview comment |
 | `.github/workflows/cleanup-branch.yml` | Reusable workflow — remove branch files from S3 on merge/delete |
 | `.github/workflows/cleanup-app.yml` | Manual workflow — remove all app files from S3 |
@@ -584,7 +584,7 @@ Manual workflow (`workflow_dispatch`) to remove all files for an app when its re
 
 ## Commit Strategy (Atomic, Practical)
 
-1. `chore: bootstrap project with ASDF, pnpm, and spec`
+1. `chore: bootstrap project with mise, pnpm, and spec`
 2. `feat(infra): add validation for branch and app names`
 3. `feat(infra): add StaticHostingBucket construct`
 4. `feat(infra): add SubdomainRoutingFunction construct` (incl. dev subdomain + branch routing)
