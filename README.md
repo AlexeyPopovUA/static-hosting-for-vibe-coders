@@ -124,17 +124,16 @@ jobs:
 
 ## Smoke test checklist
 
-After first deploy:
+After first deploy, CDK uploads two demo apps to S3:
 
-1. Upload sample content:
-   ```bash
-   BUCKET=$(aws ssm get-parameter --name /static-hosting/bucket-name --query Parameter.Value --output text)
-   echo '<h1>Hello</h1>' > index.html
-   aws s3 cp index.html "s3://${BUCKET}/example1/main/index.html"
-   ```
-   Global fallback `404.html` is deployed automatically at the bucket root by CDK.
-2. Invalidate cache for `example1` (run **Invalidate App Cache** workflow or CLI)
-3. Open `https://example1.demo.oleksiipopov.com` — should show Hello
+| App | URL | Contents |
+|-----|-----|----------|
+| `hello` | `https://hello.{baseDomain}` | HTML + CSS |
+| `palette` | `https://palette.{baseDomain}` | HTML + CSS + JS |
+
+1. Open `https://hello.demo.oleksiipopov.com` — welcome page with link to palette
+2. Open `https://palette.demo.oleksiipopov.com` — color swatches (click to copy hex)
+3. Global fallback `404.html` is deployed automatically at the bucket root
 4. Open a dev preview URL after deploying a branch via PR workflow
 
 ## Project layout
@@ -143,6 +142,7 @@ After first deploy:
 ├── docs/SPEC.md              # Canonical specification
 ├── mise.toml                 # Node.js + pnpm versions
 ├── packages/infra/           # AWS CDK app
+│   ├── assets/demo-apps/     # Sample hello + palette apps (deployed by CDK)
 │   ├── src/config.ts         # Domain and environment config
 │   ├── src/lib/validation.ts # App/branch name validation
 │   └── src/functions/        # CloudFront Function + Lambda@Edge

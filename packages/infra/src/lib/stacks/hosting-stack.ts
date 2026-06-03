@@ -3,6 +3,7 @@ import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53Targets from 'aws-cdk-lib/aws-route53-targets';
 import { Construct } from 'constructs';
 import { dnsPrefix, wildcardRecordName } from '../dns';
+import { DemoAppsDeployment } from '../constructs/demo-apps-deployment';
 import { StaticHostingBucket } from '../constructs/static-hosting-bucket';
 import { SubdomainRoutingDistribution } from '../constructs/subdomain-routing-distribution';
 import { SubdomainRoutingFunction } from '../constructs/subdomain-routing-function';
@@ -57,6 +58,13 @@ export class HostingStack extends cdk.Stack {
       routingFunction: routingFunction.function,
     });
 
+    const demoApps = new DemoAppsDeployment(this, 'DemoAppsDeployment', {
+      bucket: hostingBucket.bucket,
+      mainBranchName,
+      distribution: distribution.distribution,
+      domainName: props.domainName,
+    });
+
     if (hostedZone) {
       const prefix = dnsPrefix(props.domainName, hostedZoneName);
 
@@ -87,6 +95,16 @@ export class HostingStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'BucketName', {
       value: hostingBucket.bucket.bucketName,
+    });
+
+    new cdk.CfnOutput(this, 'DemoAppHelloUrl', {
+      value: demoApps.demoUrls.hello,
+      description: 'Hello demo app (static HTML + CSS)',
+    });
+
+    new cdk.CfnOutput(this, 'DemoAppPaletteUrl', {
+      value: demoApps.demoUrls.palette,
+      description: 'Palette demo app (HTML + CSS + JS)',
     });
   }
 }
