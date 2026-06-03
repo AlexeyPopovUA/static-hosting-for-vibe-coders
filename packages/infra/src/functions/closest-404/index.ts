@@ -111,14 +111,17 @@ export const handler = async (
     }
 
     const body = await getObjectBody(s3, bucket, key);
+    const headers = { ...response.headers };
+    delete headers['content-length'];
+    headers['content-type'] = [{ key: 'Content-Type', value: 'text/html; charset=utf-8' }];
+
     return {
+      ...response,
       status: '404',
       statusDescription: 'Not Found',
       bodyEncoding: 'base64',
-      headers: {
-        'content-type': [{ key: 'Content-Type', value: 'text/html' }],
-      },
       body: Buffer.from(body, 'utf-8').toString('base64'),
+      headers,
     };
   }
 
