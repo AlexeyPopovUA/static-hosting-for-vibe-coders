@@ -131,9 +131,8 @@ After first deploy:
    BUCKET=$(aws ssm get-parameter --name /static-hosting/bucket-name --query Parameter.Value --output text)
    echo '<h1>Hello</h1>' > index.html
    aws s3 cp index.html "s3://${BUCKET}/example1/main/index.html"
-   echo '<h1>Global 404</h1>' > 404.html
-   aws s3 cp 404.html "s3://${BUCKET}/404.html"
    ```
+   Global fallback `404.html` is deployed automatically at the bucket root by CDK.
 2. Invalidate cache for `example1` (run **Invalidate App Cache** workflow or CLI)
 3. Open `https://example1.demo.oleksiipopov.com` — should show Hello
 4. Open a dev preview URL after deploying a branch via PR workflow
