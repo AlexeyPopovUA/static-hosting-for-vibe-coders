@@ -8,7 +8,6 @@ import type {
   CloudFrontResponseResult,
 } from 'aws-lambda';
 
-const s3 = new S3Client({});
 const FILE_REGEX = /\.(html?|css|js|png|jpg|jpeg|gif|ico|svg|woff2?|ttf|eot)(\?.*)?$/i;
 
 function isHtmlNavigation(uri: string, acceptHeader?: string): boolean {
@@ -39,7 +38,19 @@ function getBucketName(
   return domainName.split('.')[0];
 }
 
-async function objectExists(bucket: string, key: string): Promise<boolean> {
+function getBucketRegion(
+  request: CloudFrontResponseEvent['Records'][0]['cf']['request'],
+): string {
+  const domainName = request.origin?.s3?.domainName;
+  if (!domainName) {
+    return 'us-east-1';
+  }
+
+  const match = domainName.match(/\.s3[.-]([a-z0-9-]+)\.amazonaws\.com$/);
+  return match?.[1] ?? 'us-east-1';
+}
+
+async function objectExists(s3: S3Client, bucket: string, key: string): Promise<boolean> {
   try {
     await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
     return true;
@@ -48,7 +59,7 @@ async function objectExists(bucket: string, key: string): Promise<boolean> {
   }
 }
 
-async function getObjectBody(bucket: string, key: string): Promise<string> {
+async function getObjectBody(s3: S3Client, bucket: string, key: string): Promise<string> {
   const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
   const body = await response.Body?.transformToString('utf-8');
   if (!body) {
@@ -85,6 +96,8 @@ export const handler = async (
     return response;
   }
 
+  const s3 = new S3Client({ region: getBucketRegion(request) });
+
   const candidates = [
     `/${parsed.app}/${parsed.branch}/404.html`,
     `/${parsed.app}/404.html`,
@@ -93,11 +106,11 @@ export const handler = async (
 
   for (const candidate of candidates) {
     const key = candidate.startsWith('/') ? candidate.slice(1) : candidate;
-    if (!(await objectExists(bucket, key))) {
+    if (!(await objectExists(s3, bucket, key))) {
       continue;
     }
 
-    const body = await getObjectBody(bucket, key);
+    const body = await getObjectBody(s3, bucket, key);
     return {
       status: '404',
       statusDescription: 'Not Found',
