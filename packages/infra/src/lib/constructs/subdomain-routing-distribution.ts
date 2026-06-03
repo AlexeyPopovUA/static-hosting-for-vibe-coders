@@ -89,7 +89,7 @@ export class SubdomainRoutingDistribution extends Construct {
       }),
     );
 
-    const closest404Role = closest404Function.role;
+    const closest404Role = closest404Function.lambda.role;
     if (!closest404Role) {
       throw new Error('Closest404Resolver execution role is required');
     }
