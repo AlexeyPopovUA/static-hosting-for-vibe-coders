@@ -4,6 +4,7 @@ import { experimental } from 'aws-cdk-lib/aws-cloudfront';
 import { S3BucketOrigin } from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { Duration, Stack } from 'aws-cdk-lib';
@@ -15,6 +16,7 @@ export interface SubdomainRoutingDistributionProps {
   bucket: s3.IBucket;
   domainName: string;
   certificateArn?: string;
+  hostedZone?: route53.IHostedZone;
   routingFunction: cloudfront.IFunction;
 }
 
@@ -26,14 +28,20 @@ export class SubdomainRoutingDistribution extends Construct {
 
     const certificate = props.certificateArn
       ? acm.Certificate.fromCertificateArn(this, 'Certificate', props.certificateArn)
-      : new acm.Certificate(this, 'Certificate', {
-          domainName: props.domainName,
-          subjectAlternativeNames: [
-            `*.${props.domainName}`,
-            `*.dev.${props.domainName}`,
-          ],
-          validation: acm.CertificateValidation.fromDns(),
-        });
+      : (() => {
+          if (!props.hostedZone) {
+            throw new Error('hostedZone is required when creating a new ACM certificate');
+          }
+
+          return new acm.Certificate(this, 'Certificate', {
+            domainName: props.domainName,
+            subjectAlternativeNames: [
+              `*.${props.domainName}`,
+              `*.dev.${props.domainName}`,
+            ],
+            validation: acm.CertificateValidation.fromDns(props.hostedZone),
+          });
+        })();
 
     const closest404Path = path.join(__dirname, '../../functions/closest-404');
 

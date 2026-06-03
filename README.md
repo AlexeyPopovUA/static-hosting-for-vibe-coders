@@ -33,7 +33,8 @@ pnpm install
    - `AWS_AUTH_ROLE` — IAM role ARN for GitHub Actions (required)
    - `HOSTING_DOMAIN_NAME` — base domain (optional, default `demo.oleksiipopov.com`)
    - `HOSTING_MAIN_BRANCH` — production branch folder name (optional, default `main`)
-   - `HOSTING_HOSTED_ZONE_ID` — Route53 zone ID (optional; omit to skip DNS records)
+   - `HOSTING_HOSTED_ZONE_ID` — Route53 zone ID (required for DNS records and ACM validation unless `HOSTING_CERTIFICATE_ARN` is set)
+   - `HOSTING_HOSTED_ZONE_NAME` — Route53 zone apex name, e.g. `oleksiipopov.com` when `HOSTING_DOMAIN_NAME` is `demo.oleksiipopov.com` (defaults to `HOSTING_DOMAIN_NAME`)
    - `HOSTING_CERTIFICATE_ARN` — existing ACM cert ARN (optional; CDK creates one if omitted)
    - `HOSTING_ENVIRONMENT` — tag value (optional, default `production`)
 
@@ -49,6 +50,7 @@ export CDK_DEFAULT_REGION=us-east-1
 # Optional overrides:
 # export HOSTING_DOMAIN_NAME=demo.oleksiipopov.com
 # export HOSTING_HOSTED_ZONE_ID=Z1234567890ABC
+# export HOSTING_HOSTED_ZONE_NAME=oleksiipopov.com
 
 pnpm type-check
 pnpm cdk:synth

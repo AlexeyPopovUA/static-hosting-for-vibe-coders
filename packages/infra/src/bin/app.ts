@@ -9,6 +9,7 @@ new HostingStack(app, 'StaticHostingStack', {
   domainName: hostingConfig.domainName,
   mainBranchName: hostingConfig.mainBranchName,
   hostedZoneId: hostingConfig.hostedZoneId,
+  hostedZoneName: hostingConfig.hostedZoneName,
   certificateArn: hostingConfig.certificateArn,
   environment: hostingConfig.environment,
   env: {
