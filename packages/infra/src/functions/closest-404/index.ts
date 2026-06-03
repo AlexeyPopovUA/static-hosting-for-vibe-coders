@@ -101,11 +101,12 @@ export const handler = async (
     return {
       status: '404',
       statusDescription: 'Not Found',
+      bodyEncoding: 'base64',
       headers: {
         'content-type': [{ key: 'Content-Type', value: 'text/html; charset=utf-8' }],
         'cache-control': [{ key: 'Cache-Control', value: 'max-age=0, s-maxage=10' }],
       },
-      body,
+      body: Buffer.from(body, 'utf-8').toString('base64'),
     };
   }
 
