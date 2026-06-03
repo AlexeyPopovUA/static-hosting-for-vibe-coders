@@ -97,7 +97,7 @@ export class SubdomainRoutingDistribution extends Construct {
     props.bucket.addToResourcePolicy(
       new iam.PolicyStatement({
         sid: 'AllowClosest404LambdaEdgeRead',
-        actions: ['s3:GetObject', 's3:HeadObject'],
+        actions: ['s3:GetObject'],
         resources: [props.bucket.arnForObjects('*')],
         principals: [closest404Role],
       }),
