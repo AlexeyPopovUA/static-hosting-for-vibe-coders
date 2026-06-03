@@ -73,7 +73,7 @@ jobs:
   "scripts": {
     "build": "node scripts/build.mjs"
   },
-  "packageManager": "pnpm@10.26.1",
+  "packageManager": "pnpm@10.34.1",
   "engines": {
     "node": ">=24",
     "pnpm": ">=10"

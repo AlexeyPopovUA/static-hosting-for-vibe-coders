@@ -37,6 +37,7 @@ function main(): void {
       'Usage: validate-names --app <slug> [--branch <name>] [--print-sanitized-branch]',
     );
     process.exit(1);
+    return;
   }
 
   try {

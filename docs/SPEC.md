@@ -307,7 +307,7 @@ Document all aspects:
 ### 1.2 Bootstrap project
 
 - Root `package.json` with `engines`: `node: ">=24"`, `pnpm: ">=10"`
-- `mise.toml`: `nodejs 24.11.1`, `pnpm 10.26.1` (or latest)
+- `mise.toml`: `node 24.16.0`, `pnpm 10.34.1` (or latest)
 - `pnpm-workspace.yaml`: `packages: ['packages/*']`
 - `packages/infra/`: CDK app, `aws-cdk-lib` latest, `constructs` ^10
 
@@ -430,11 +430,11 @@ Document all aspects:
 - Permissions: `id-token: write`, `contents: read`
 - Steps:
   1. Checkout
-  2. `jdx/mise-action@v2` (uses `mise.toml`)
+  2. `jdx/mise-action@v4` (uses `mise.toml`)
   3. pnpm store cache
   4. `pnpm install --frozen-lockfile`
   5. `pnpm type-check`
-  6. `aws-actions/configure-aws-credentials@v4` with `role-to-assume: ${{ vars.AWS_AUTH_ROLE }}`, `aws-region: us-east-1`
+  6. `aws-actions/configure-aws-credentials@v6` with `role-to-assume: ${{ vars.AWS_AUTH_ROLE }}`, `aws-region: us-east-1`
   7. `pnpm cdk deploy --require-approval never` (in packages/infra)
 
 **Commit**: `ci: add validate-infra and deploy-infra workflows`

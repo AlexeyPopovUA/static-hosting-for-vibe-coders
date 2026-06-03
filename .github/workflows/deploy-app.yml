@@ -44,17 +44,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout app
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Checkout platform scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ inputs.platform-repository }}
           ref: ${{ inputs.platform-ref }}
           path: .platform
 
       - name: Setup mise
-        uses: jdx/mise-action@v2
+        uses: jdx/mise-action@v4
 
       - name: Install app dependencies
         run: pnpm install --frozen-lockfile
@@ -88,7 +88,7 @@ jobs:
           echo "sanitized=$SANITIZED" >> "$GITHUB_OUTPUT"
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_AUTH_ROLE }}
           aws-region: us-east-1
@@ -120,7 +120,7 @@ jobs:
 
       - name: Post preview URL comment
         if: github.event_name == 'pull_request'
-        uses: peter-evans/create-or-update-comment@v4
+        uses: peter-evans/create-or-update-comment@v5
         with:
           issue-number: ${{ github.event.pull_request.number }}
           body: |

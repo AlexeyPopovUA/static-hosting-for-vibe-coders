@@ -55,7 +55,7 @@ cat > "$OUTPUT_DIR/package.json" <<EOF
   "scripts": {
     "build": "node scripts/build.mjs"
   },
-  "packageManager": "pnpm@10.26.1",
+  "packageManager": "pnpm@10.34.1",
   "engines": {
     "node": ">=24",
     "pnpm": ">=10"
@@ -65,8 +65,8 @@ EOF
 
 cat > "$OUTPUT_DIR/mise.toml" <<'EOF'
 [tools]
-node = "24.11.1"
-pnpm = "10.26.1"
+node = "24.16.0"
+pnpm = "10.34.1"
 EOF
 
 cat > "$OUTPUT_DIR/.gitignore" <<'EOF'
