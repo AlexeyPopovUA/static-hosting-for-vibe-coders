@@ -89,6 +89,20 @@ export class SubdomainRoutingDistribution extends Construct {
       }),
     );
 
+    const closest404Role = closest404Function.role;
+    if (!closest404Role) {
+      throw new Error('Closest404Resolver execution role is required');
+    }
+
+    props.bucket.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: 'AllowClosest404LambdaEdgeRead',
+        actions: ['s3:GetObject', 's3:HeadObject'],
+        resources: [props.bucket.arnForObjects('*')],
+        principals: [closest404Role],
+      }),
+    );
+
     const htmlCachePolicy = new cloudfront.CachePolicy(this, 'HtmlCachePolicy', {
       cachePolicyName: `${Stack.of(this).stackName}-html-cache`,
       defaultTtl: Duration.seconds(300),
