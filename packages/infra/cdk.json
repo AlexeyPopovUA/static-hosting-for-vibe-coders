@@ -1,5 +1,5 @@
 {
-  "app": "npx tsx src/bin/app.ts",
+  "app": "node_modules/.bin/tsx src/bin/app.ts",
   "watch": {
     "include": ["**"],
     "exclude": [
