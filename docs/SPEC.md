@@ -138,18 +138,26 @@ The platform supports all common routing strategies without per-app configuratio
 
 ## CloudFront Caching
 
-- **CloudFront cache policy** (controls edge TTL via `CachePolicy`):
-  - HTML / `404.html`: `defaultTtl: 300s`, `minTtl: 0`, `maxTtl: 300s` (short edge TTL)
-  - Static assets (`.js`, `.css`, `.png`, etc.): use managed `CachingOptimized` policy (default TTL 24h, max 1yr) or a custom policy with `defaultTtl: 86400s`, `maxTtl: 31536000s`
-  - Consider a separate cache behavior for `/*.html` with the short-TTL policy
-- **Origin response headers** (controls browser caching — set by app's files or overridden via a CloudFront response headers policy):
-  - HTML: `Cache-Control: max-age=0, s-maxage=300, stale-while-revalidate=60`
-  - Static assets: `Cache-Control: max-age=31536000, immutable`
-- **Error handling split**:
-  - HTML/navigation misses: closest-404 inline body served by Lambda@Edge
-  - Non-HTML misses: plain origin `404` response (no Lambda@Edge intervention)
-- **Error caching**: Keep `403/404` error caching TTL very low (`0–10s`) so newly uploaded `404.html` pages are picked up quickly
-- **Invalidation**: Use path patterns `/{app}/{mainBranchName}/*` + `/{app}/404.html` (production) or `/{app}/{branch}/*` + `/{app}/404.html` (specific branch). To invalidate the global fallback, use `/404.html` separately
+**Implemented in** `SubdomainRoutingDistribution`:
+
+- **Default behavior** (navigation, HTML, and extensions without a dedicated behavior): custom `HtmlCachePolicy` — `defaultTtl: 300s`, `minTtl: 0`, `maxTtl: 300s`
+- **Additional behaviors** (managed `CachingOptimized`): `*.js`, `*.css`, `*.png`, `*.jpg`, `*.svg`, `*.woff2` — each with the same viewer-request CloudFront Function
+- **Not mirrored as separate behaviors**: other `FILE_REGEX` types (e.g. `.jpeg`, `.gif`, `.ico`, `.woff`, `.ttf`, `.eot`) use the default short-TTL behavior
+
+**Origin `Cache-Control`** (browser caching):
+
+- CDK bootstrap uploads (global `404.html`, demo apps) set `max-age=0, s-maxage=300` (or `s-maxage=10` for global 404) via `BucketDeployment`
+- App-deployed content: set by each app's build output; there is **no** CloudFront response headers policy on the distribution today
+- **Recommended for app builds**: HTML `max-age=0, s-maxage=300`; static assets `max-age=31536000, immutable`
+
+**Error handling split**:
+
+- HTML/navigation misses: closest-404 inline body served by Lambda@Edge
+- Non-HTML misses: plain origin `404` response (no Lambda@Edge intervention)
+
+**Not configured yet**: explicit low TTL for cached `403/404` at the edge (rely on invalidation after deploy)
+
+**Invalidation**: `/{app}/{mainBranchName}/*` + `/{app}/404.html` (production) or `/{app}/{branch}/*` + `/{app}/404.html` (branch). Global fallback: `/404.html` separately when needed
 
 ---
 
@@ -167,7 +175,7 @@ The platform supports all common routing strategies without per-app configuratio
   3. Create invalidation: `aws cloudfront create-invalidation --distribution-id $DIST_ID --paths "/{app}/{mainBranchName}/*" "/{app}/404.html"` or `--paths "/{app}/{branch}/*" "/{app}/404.html"`
   4. If `wait`: poll `get-invalidation` until status is `Completed` (with timeout)
 - **Distribution ID**: Stored in SSM `/static-hosting/distribution-id` by HostingStack via `StringParameter`
-- **Reusability**: Add `workflow_call` so other workflows (e.g. `deploy-app.yml`) can trigger invalidation after upload
+- **Reusability**: Exposes `workflow_call` for manual or chained use. **`deploy-app.yml` inlines invalidation** (same path rules) rather than calling this workflow — avoids a nested workflow run
 
 ---
 
@@ -192,6 +200,7 @@ jobs:
       app-slug: my-app
       build-command: pnpm build
       output-dir: dist
+      base-domain: demo.oleksiipopov.com
     secrets: inherit
 ```
 
@@ -202,23 +211,29 @@ jobs:
 | `app-slug` | yes | — | App slug (validated against safe pattern) |
 | `build-command` | no | `pnpm build` | Command to build the app |
 | `output-dir` | no | `dist` | Directory containing build output |
-| `branch` | no | `github.ref_name` | Branch name for S3 prefix (auto-derived from PR head or push ref) |
+| `branch` | no | derived | Branch for S3 prefix: input, else `github.head_ref` (PR), else `github.ref_name` |
+| `base-domain` | no | `demo.oleksiipopov.com` | Base domain for preview URL comments |
+| `main-branch` | no | `main` | Production branch folder name (used for prod invalidation paths on push to main) |
+| `platform-repository` | no | `AlexeyPopovUA/static-hosting-for-vibe-coders` | Repo containing `validate-names.ts` |
+| `platform-ref` | no | `main` | Git ref for platform checkout |
 
 ### Requirements
 
-App repos must use **pnpm** as their package manager (platform convention for simplicity).
+- App repos must use **pnpm** (`mise.toml` recommended so `jdx/mise-action` matches local tooling)
+- App repo needs `AWS_AUTH_ROLE` and OIDC configured (same as platform)
 
 ### Steps
 
 1. Checkout the calling app repo
-2. Setup Node.js (mise or `actions/setup-node`)
-3. Install dependencies (`pnpm install --frozen-lockfile`)
-4. Run build command
-5. Sanitize `branch` and validate `app-slug` and sanitized branch with `validation.ts`
-6. Configure AWS credentials (OIDC)
-7. `aws s3 sync --delete {output-dir}/ s3://{bucket}/{app-slug}/{branch}/`
-8. Trigger CloudFront invalidation (call `invalidate-app.yml` or inline)
-9. If PR: post comment with preview URL (`{app-slug}--{branch}.dev.{baseDomain}`)
+2. Checkout platform repo into `.platform` (for validation scripts)
+3. Setup toolchain via `jdx/mise-action` (from app repo `mise.toml`)
+4. `pnpm install --frozen-lockfile` in app repo; same in `.platform` for script deps
+5. Run `build-command`
+6. Sanitize `branch` and validate `app-slug` via `.platform/packages/infra` → `validate-names.ts` (`--print-sanitized-branch`)
+7. Configure AWS credentials (OIDC)
+8. `aws s3 sync --delete {output-dir}/ s3://{bucket}/{app-slug}/{sanitized-branch}/`
+9. Inline CloudFront invalidation (same paths as `invalidate-app.yml`; prod push to `main-branch` uses `/{app}/{main-branch}/*`)
+10. If PR: post/update comment with preview URL via `peter-evans/create-or-update-comment@v5`
 
 ### PR Preview Comment
 
@@ -244,40 +259,45 @@ Uses `peter-evans/create-or-update-comment` or similar action. The comment is up
 
 ```
 static-hosting-for-vibe-coders/
-├── mise.toml                   # mise: nodejs 24.x, pnpm latest
+├── mise.toml                         # node 24.x, pnpm 10.x
 ├── docs/
-│   └── SPEC.md                 # Master specification (all aspects)
+│   └── SPEC.md                       # Master specification (this file)
+├── .cursor/skills/create-demo-app/   # Agent skill + scaffold script for new app repos
 ├── packages/
 │   └── infra/
+│       ├── assets/
+│       │   ├── demo-apps/            # hello, palette — deployed by CDK on stack deploy
+│       │   └── global-404/           # bucket-root /404.html
 │       ├── src/
-│       │   ├── bin/
-│       │   │   └── app.ts
+│       │   ├── bin/app.ts
+│       │   ├── config.ts             # HOSTING_* env → stack props
 │       │   ├── lib/
 │       │   │   ├── constructs/
 │       │   │   │   ├── static-hosting-bucket.ts
 │       │   │   │   ├── subdomain-routing-distribution.ts
-│       │   │   │   └── subdomain-routing-function.ts
-│       │   │   ├── stacks/
-│       │   │   │   └── hosting-stack.ts
-│       │   │   └── validation.ts          # validateBranchName, validateAppSlug
-│       │   ├── scripts/
-│       │   │   └── validate-names.ts      # CLI for workflow validation
+│       │   │   │   ├── subdomain-routing-function.ts
+│       │   │   │   └── demo-apps-deployment.ts
+│       │   │   ├── stacks/hosting-stack.ts
+│       │   │   ├── validation.ts
+│       │   │   ├── validation.test.ts
+│       │   │   ├── dns.ts            # hosted-zone prefix helpers
+│       │   │   └── dns.test.ts
+│       │   ├── scripts/validate-names.ts
 │       │   └── functions/
 │       │       ├── subdomain-routing/
-│       │       │   └── index.js           # CloudFront Function (ES5.1)
-│       │       └── closest-404/
-│       │           └── index.ts           # Lambda@Edge (origin-response)
+│       │       │   ├── index.js
+│       │       │   └── subdomain-routing.test.ts
+│       │       └── closest-404/index.ts
 │       ├── cdk.json
 │       ├── package.json
-│       └── tsconfig.json
-├── .github/
-│   └── workflows/
-│       ├── deploy-infra.yml
-│       ├── validate-infra.yml
-│       ├── deploy-app.yml                 # Reusable workflow for app repos
-│       ├── cleanup-branch.yml             # Reusable workflow for branch removal
-│       ├── cleanup-app.yml                # Manual workflow for full app removal
-│       └── invalidate-app.yml             # Manual invalidation for app/branch
+│       └── tsconfig.json             # types: ["node"] for TypeScript 6
+├── .github/workflows/
+│   ├── deploy-infra.yml
+│   ├── validate-infra.yml
+│   ├── deploy-app.yml
+│   ├── cleanup-branch.yml
+│   ├── cleanup-app.yml
+│   └── invalidate-app.yml
 ├── package.json
 ├── pnpm-workspace.yaml
 └── README.md
@@ -297,7 +317,7 @@ Document all aspects:
 - **Validation**: Branch and app slug rules (regex, length 1–63)
 - **Caching**: CloudFront cache policy (HTML vs static assets)
 - **Invalidation**: Manual workflow for app/branch, optional wait
-- **Tech stack**: Node.js 24, pnpm, TypeScript 5.x, AWS CDK 2.x
+- **Tech stack**: Node.js 24, pnpm 10, TypeScript 6.x, AWS CDK 2.x, Vitest 4
 - **Environments**: Dev/staging (optional), production
 - **Configuration**: Domain, certificate, hosted zone (import or create)
 - **Tagging**: `Project`, `Environment`, `ManagedBy` (CDK)
@@ -324,6 +344,7 @@ Document all aspects:
 - Optional `removalPolicy`, `bucketName` prefix
 - Tags: `Project`, `Environment`
 - **Output**: Write `bucketName` to SSM parameter `/static-hosting/bucket-name` (for deploy workflow)
+- **Global 404**: `BucketDeployment` from `assets/global-404/` to bucket root `/404.html` (`max-age=0, s-maxage=10`)
 
 ### 2.2 `SubdomainRoutingFunction` construct
 
@@ -342,7 +363,7 @@ Document all aspects:
 - CloudFront Distribution
 - Origin: S3 via OAC (from `StaticHostingBucket`)
 - Default behavior: GET/HEAD/OPTIONS, viewer-request CloudFront Function
-- **Cache policy**: Custom policy — HTML (`*.html`, `/`) short TTL (e.g. 5 min); static assets long TTL (1 year). Use `CachePolicy` with `minTtl`, `maxTtl`, `defaultTtl`; consider `CachePolicy.fromCachePolicyId` for `CachingOptimized` on static paths, or single policy with `defaultTtl: 300` for HTML-heavy SPAs
+- **Cache policy**: Default behavior uses custom 5 min HTML policy; `*.js`, `*.css`, `*.png`, `*.jpg`, `*.svg`, `*.woff2` use `CachingOptimized` (see [CloudFront Caching](#cloudfront-caching))
 - Domain names: `*.demo.oleksiipopov.com`, `*.dev.demo.oleksiipopov.com` (configurable)
 - Certificate: ACM (us-east-1), DNS validation, include both wildcards
 - **Closest 404 resolver**: Attach Lambda@Edge (origin-response) to handle HTML/navigation `404/403` from S3 and serve the nearest existing 404 page inline:
@@ -353,14 +374,22 @@ Document all aspects:
 - **Implementation note**: Lambda@Edge skips non-HTML assets (returns plain `404/403`). For HTML/navigation: checks candidate existence (`HeadObject`), fetches the first match (`GetObject`), and returns its body inline as a generated response with status `404` and `Content-Type: text/html` (no redirect). Body limit: 1 MB (sufficient for error pages)
 - **App/branch resolution**: Lambda@Edge parses app and branch from the **rewritten URI** (e.g. `/{app}/{branch}/path`), not the Host header, since the CloudFront Function has already rewritten it
 - **Lambda@Edge permissions**: The closest-404 resolver's execution role needs `s3:GetObject` and `s3:HeadObject` on the hosting bucket (for candidate existence checks and body fetching). Grant via `bucket.grantRead(closest404Function)`
+- **Lambda@Edge runtime**: `NODEJS_20_X` (Edge requirement; not Node 24)
 - **Lambda@Edge region**: Must be deployed in `us-east-1`. Use `cloudfront.experimental.EdgeFunction` (CDK handles cross-region deployment automatically)
 - **Output**: Write `distributionId` to SSM parameter `/static-hosting/distribution-id` (StringParameter) for invalidation workflow
 
-### 2.4 `HostingStack` (single stack)
+### 2.4 `DemoAppsDeployment` construct
 
-- Composes: `StaticHostingBucket` + `SubdomainRoutingFunction` + `SubdomainRoutingDistribution` (with closest-404 Lambda@Edge association)
-- Inputs: `domainName`, `mainBranchName`, `hostedZoneId` (or create), `certificateArn` (optional)
-- Outputs: `distributionDomainName`, `distributionUrl`, `bucketName`
+- Deploys built-in smoke-test apps from `assets/demo-apps/` to `/{app}/{mainBranchName}/` (`hello`, `palette`)
+- Invalidates CloudFront paths on deploy; outputs `DemoAppHelloUrl`, `DemoAppPaletteUrl`
+- See [Bootstrap content](#bootstrap-content-deployed-by-cdk)
+
+### 2.5 `HostingStack` (single stack)
+
+- Composes: `StaticHostingBucket` + `SubdomainRoutingFunction` + `SubdomainRoutingDistribution` + `DemoAppsDeployment`
+- Inputs: `domainName`, `mainBranchName`, `hostedZoneId`, `hostedZoneName` (optional; for nested zones), `certificateArn` (optional), `environment`
+- Optional Route53: two wildcard `ARecord` aliases when `hostedZoneId` is set
+- Outputs: `distributionDomainName`, `distributionUrl`, `bucketName`, demo app URLs
 
 **Commit**: `feat(infra): add StaticHostingBucket construct`
 
@@ -374,7 +403,7 @@ Document all aspects:
 
 ---
 
-## Phase 2.5: Validation Module
+## Phase 2.6: Validation Module
 
 - `packages/infra/src/lib/validation.ts`:
   - `SAFE_LABEL_REGEX = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/`
@@ -398,7 +427,7 @@ Document all aspects:
   - `*.demo.oleksiipopov.com` → CNAME or Alias to CloudFront
   - `*.dev.demo.oleksiipopov.com` → CNAME or Alias to CloudFront
 - Prefer Route53 Alias (`ARecord`/`AaaaRecord` with `CloudFrontTarget`) when feasible; wildcard `CnameRecord` is also acceptable for subdomains.
-- Make DNS optional via stack props (e.g. `hostedZoneId?: string`)
+- Make DNS optional via stack props (`hostedZoneId?: string`). Use `hostedZoneName` when the zone apex differs from `domainName` (e.g. zone `oleksiipopov.com`, app domain `demo.oleksiipopov.com`) — see `lib/dns.ts`
 
 **Commit**: `feat(infra): add wildcard Route53 DNS records for distribution`
 
@@ -419,14 +448,14 @@ Document all aspects:
 ### 5.1 `validate-infra.yml`
 
 - On: PR to main, push to main
-- Paths: `packages/infra/**`, `.github/workflows/validate-infra.yml`
-- Steps: checkout, mise install (from `mise.toml`), pnpm cache, `pnpm install --frozen-lockfile`, `pnpm type-check`, `pnpm cdk synth` (in packages/infra)
+- Paths: `packages/infra/**`, `.github/workflows/validate-infra.yml`, `mise.toml`, `pnpm-lock.yaml`, root `package.json`, `pnpm-workspace.yaml`
+- Steps: checkout, `jdx/mise-action@v4`, pnpm cache, `pnpm install --frozen-lockfile`, `pnpm type-check`, `pnpm test`, `pnpm cdk synth` (with `HOSTING_*` vars from repository variables)
 - No AWS credentials needed
 
 ### 5.2 `deploy-infra.yml`
 
 - On: push to main, `workflow_dispatch`
-- Paths: `packages/infra/**`, `.github/workflows/deploy-infra.yml`
+- Paths: same as validate-infra (infra workflow file instead of validate)
 - Permissions: `id-token: write`, `contents: read`
 - Steps:
   1. Checkout
@@ -468,19 +497,9 @@ Document all aspects:
 ### `deploy-app.yml`
 
 - **Trigger**: `workflow_call` (reusable workflow consumed by app repos)
-- **Inputs**: `app-slug`, `build-command` (default `pnpm build`), `output-dir` (default `dist`), `branch` (default: derived from trigger ref)
+- **Inputs**: see [Reusable Deploy Workflow](#reusable-deploy-workflow) inputs table
 - **Permissions**: `id-token: write`, `contents: read`, `pull-requests: write`
-- **Steps**:
-  1. Checkout calling repo
-  2. Setup Node.js (mise or `actions/setup-node`)
-  3. `pnpm install --frozen-lockfile`
-  4. Run `build-command`
-  5. Sanitize `branch` and validate `app-slug` and sanitized branch (inline or via `validate-names.ts`)
-  6. Configure AWS credentials (OIDC)
-  7. Get bucket name from SSM: `aws ssm get-parameter --name /static-hosting/bucket-name`
-  8. `aws s3 sync --delete {output-dir}/ s3://{bucket}/{app-slug}/{branch}/`
-  9. Trigger invalidation (call `invalidate-app.yml` via `workflow_call` or inline)
-  10. If PR event: post/update comment with preview URL `https://{app-slug}--{branch}.dev.{baseDomain}`
+- **Steps**: match [Reusable Deploy Workflow](#reusable-deploy-workflow) steps (platform checkout, inline invalidation)
 
 **Commit**: `ci: add reusable deploy-app workflow for app repos`
 
@@ -514,7 +533,7 @@ Reusable workflow (`workflow_call`) that app repos trigger when a branch is merg
   2. Configure AWS credentials (OIDC)
   3. Get bucket name from SSM
   4. `aws s3 rm --recursive s3://{bucket}/{app-slug}/{branch}/`
-  5. Invalidate `/{app-slug}/{branch}/*`
+  5. Invalidate `/{app-slug}/{sanitized-branch}/*` only (does not invalidate `/{app}/404.html`)
 
 **Commit**: `ci: add cleanup-branch workflow for stale branch removal`
 
@@ -537,9 +556,14 @@ Manual workflow (`workflow_dispatch`) to remove all files for an app when its re
 
 ## Phase 6: Configuration and Documentation
 
-- `packages/infra/src/config.ts`: central config for `domainName`, `mainBranchName`, `hostedZoneId`, `certificateArn`
-- Update `docs/SPEC.md` with final structure, env vars, deployment steps
-- `README.md`: quick start, prerequisites, deployment
+- `packages/infra/src/config.ts` reads:
+  - `HOSTING_DOMAIN_NAME` (default `demo.oleksiipopov.com`)
+  - `HOSTING_MAIN_BRANCH` (default `main`)
+  - `HOSTING_HOSTED_ZONE_ID`, `HOSTING_HOSTED_ZONE_NAME` (optional)
+  - `HOSTING_CERTIFICATE_ARN` (optional; CDK creates ACM cert if omitted and zone is set)
+  - `HOSTING_ENVIRONMENT` (default `production`)
+- GitHub Actions use the same `HOSTING_*` repository variables for synth/deploy
+- `README.md`: quick start, prerequisites, app integration, smoke tests
 
 **Commit**: `docs: add configuration and deployment guide`
 
@@ -552,8 +576,13 @@ Manual workflow (`workflow_dispatch`) to remove all files for an app when its re
 | `packages/infra/src/lib/validation.ts` | Branch/app name validation (shared by CDK, scripts, Lambda@Edge) |
 | `packages/infra/src/functions/subdomain-routing/index.js` | CloudFront Function — subdomain URI rewriting (ES5.1) |
 | `packages/infra/src/functions/closest-404/index.ts` | Lambda@Edge — hierarchical 404 resolver (origin-response) |
+| `packages/infra/src/config.ts` | `HOSTING_*` environment → stack configuration |
+| `packages/infra/src/lib/dns.ts` | Route53 record name helpers for nested domains |
+| `packages/infra/src/lib/constructs/demo-apps-deployment.ts` | CDK deploy of hello/palette demo apps |
 | `packages/infra/src/lib/stacks/hosting-stack.ts` | Main CDK stack composing all constructs |
+| `.cursor/skills/create-demo-app/` | Scaffold script and reference for new app repos |
 | `.github/workflows/deploy-infra.yml` | CI/CD — OIDC, mise, pnpm cache, CDK deploy |
+| `.github/workflows/validate-infra.yml` | PR CI — type-check, tests, synth |
 | `.github/workflows/deploy-app.yml` | Reusable workflow — build, deploy, invalidate, PR preview comment |
 | `.github/workflows/cleanup-branch.yml` | Reusable workflow — remove branch files from S3 on merge/delete |
 | `.github/workflows/cleanup-app.yml` | Manual workflow — remove all app files from S3 |
@@ -573,16 +602,32 @@ Manual workflow (`workflow_dispatch`) to remove all files for an app when its re
 
 ---
 
-## Out of Scope (Future Phases)
+## Bootstrap content (deployed by CDK)
 
-- **Basic auth with Lambda@Edge**: Requires Lambda@Edge (origin-request), DynamoDB/SSM for credentials. Defer to Phase 2.
-- **Multi-environment**: Single stack for now; add `Environment` prop later.
-- **Sample app content**: Add `/example1/main/index.html` etc. manually or via separate deploy script.
-- **Observability**: CloudWatch alarms for Lambda@Edge errors, S3 access logging, CloudFront access logs.
+On `cdk deploy`, the stack uploads:
+
+| Path | Source | URL (example) |
+|------|--------|----------------|
+| `/404.html` | `assets/global-404/` | Used by closest-404 resolver |
+| `/hello/{mainBranchName}/` | `assets/demo-apps/hello/` | `https://hello.{baseDomain}` |
+| `/palette/{mainBranchName}/` | `assets/demo-apps/palette/` | `https://palette.{baseDomain}` |
+
+Use these for smoke tests after first deploy (see `README.md`). Real apps deploy via `deploy-app.yml` from their own repositories.
 
 ---
 
-## Commit Strategy (Atomic, Practical)
+## Out of Scope (Future Phases)
+
+- **Basic auth with Lambda@Edge**: Requires Lambda@Edge (origin-request), DynamoDB/SSM for credentials
+- **Multi-environment**: Single stack for now; `Environment` tag exists but separate stacks per env are not implemented
+- **CloudFront response headers policy**: Per-app `Cache-Control` at the edge (apps set headers at build time today)
+- **Observability**: CloudWatch alarms for Lambda@Edge errors, S3 access logging, CloudFront access logs
+
+---
+
+## Commit Strategy (Historical)
+
+Phases 1–6 are **implemented**. The list below was the original atomic commit plan:
 
 1. `chore: bootstrap project with mise, pnpm, and spec`
 2. `feat(infra): add validation for branch and app names`
@@ -604,7 +649,16 @@ Manual workflow (`workflow_dispatch`) to remove all files for an app when its re
 
 ## Prerequisites (User Action)
 
-- Create GitHub repo variable `AWS_AUTH_ROLE` with IAM role ARN (OIDC)
-- Configure OIDC in AWS IAM for the repository (or use existing gha-aws-oidc pattern)
-- Have Route53 hosted zone for `demo.oleksiipopov.com` (or adjust domain in config)
-- Grant the OIDC role permissions: CloudFront, S3, SSM, Route53, ACM, Lambda, IAM (for Lambda@Edge execution role)
+**Platform repo** (`static-hosting-for-vibe-coders`):
+
+- GitHub variable `AWS_AUTH_ROLE` — IAM role ARN for OIDC
+- Optional GitHub variables: `HOSTING_DOMAIN_NAME`, `HOSTING_MAIN_BRANCH`, `HOSTING_HOSTED_ZONE_ID`, `HOSTING_HOSTED_ZONE_NAME`, `HOSTING_CERTIFICATE_ARN`, `HOSTING_ENVIRONMENT`
+- OIDC trust in AWS IAM for this repository (and app repos that deploy)
+- Route53 hosted zone (apex may differ from app domain — set `HOSTING_HOSTED_ZONE_NAME` when needed)
+- IAM permissions for the OIDC role: CloudFront, S3, SSM, Route53, ACM, Lambda, IAM (Lambda@Edge execution role)
+
+**Each app repo**:
+
+- Same `AWS_AUTH_ROLE` (or a role scoped to the app prefix)
+- `mise.toml` + `pnpm-lock.yaml` + `packageManager` in `package.json`
+- Workflows calling `deploy-app.yml` and optionally `cleanup-branch.yml` (see `README.md`)
