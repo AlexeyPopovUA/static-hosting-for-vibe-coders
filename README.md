@@ -82,6 +82,11 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
 jobs:
   deploy:
     uses: AlexeyPopovUA/static-hosting-for-vibe-coders/.github/workflows/deploy-app.yml@main
@@ -105,13 +110,17 @@ on:
   pull_request:
     types: [closed]
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   cleanup:
-    if: github.event.ref_type == 'branch' || github.event.pull_request.merged
+    if: github.event_name == 'pull_request' || github.event.ref_type == 'branch'
     uses: AlexeyPopovUA/static-hosting-for-vibe-coders/.github/workflows/cleanup-branch.yml@main
     with:
       app-slug: my-app
-      branch: ${{ github.event.ref || github.head_ref }}
+      branch: ${{ github.event.ref_name || github.head_ref }}
     secrets: inherit
 ```
 

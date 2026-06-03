@@ -502,11 +502,11 @@ Reusable workflow (`workflow_call`) that app repos trigger when a branch is merg
 
   jobs:
     cleanup:
-      if: github.event.ref_type == 'branch' || github.event.pull_request.merged
+      if: github.event_name == 'pull_request' || github.event.ref_type == 'branch'
       uses: <org>/static-hosting-for-vibe-coders/.github/workflows/cleanup-branch.yml@main
       with:
         app-slug: my-app
-        branch: ${{ github.event.ref || github.head_ref }}
+        branch: ${{ github.event.ref_name || github.head_ref }}
       secrets: inherit
   ```
 - **Steps**:
