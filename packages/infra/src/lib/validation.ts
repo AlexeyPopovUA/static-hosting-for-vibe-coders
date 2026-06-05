@@ -2,6 +2,7 @@ export const SAFE_LABEL_REGEX = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export function sanitizeBranchName(name: string): string {
   return name
+    .replace(/^refs\/heads\//, '')
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, '-')
     .replace(/^-+|-+$/g, '')

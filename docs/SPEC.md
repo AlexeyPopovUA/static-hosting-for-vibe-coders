@@ -162,7 +162,7 @@ The platform supports all common routing strategies without per-app configuratio
 
 **Invalidation**: `/{app}/{mainBranchName}/*` + `/{app}/404.html` (production) or `/{app}/{branch}/*` + `/{app}/404.html` (branch). Global fallback: `/404.html` separately when needed
 
-**Deploy-driven invalidation** (primary update path): every `deploy-app.yml` run invalidates the deployed branch prefix after `s3 sync`. Active feature-branch iteration therefore updates previews **per push**, not on a fixed TTL schedule. `cleanup-branch.yml` invalidates the removed branch prefix once on delete/PR close.
+**Deploy-driven invalidation** (primary update path): every `deploy-app.yml` run invalidates the deployed branch prefix after `s3 sync`. Active feature-branch iteration therefore updates previews **per push**, not on a fixed TTL schedule. `cleanup-branch.yml` invalidates the removed branch prefix once on branch delete.
 
 ---
 
@@ -514,23 +514,21 @@ Document all aspects:
 
 ### `cleanup-branch.yml`
 
-Reusable workflow (`workflow_call`) that app repos trigger when a branch is merged or deleted. Removes the branch's S3 directory and invalidates the cache.
+Reusable workflow (`workflow_call`) that app repos trigger when a branch is deleted. Removes the branch's S3 directory and invalidates the cache.
 
-- **Trigger**: `workflow_call` with inputs: `app-slug` (required), `branch` (required)
+- **Trigger**: `workflow_call` with inputs: `app-slug` (required), `branch` (required; full `refs/heads/...` or short branch name — sanitized in workflow)
 - **Usage from app repo**:
   ```yaml
   on:
     delete:
-    pull_request:
-      types: [closed]
 
   jobs:
     cleanup:
-      if: github.event_name == 'pull_request' || github.event.ref_type == 'branch'
+      if: github.event.ref_type == 'branch'
       uses: <org>/static-hosting-for-vibe-coders/.github/workflows/cleanup-branch.yml@main
       with:
         app-slug: my-app
-        branch: ${{ github.event.ref_name || github.head_ref }}
+        branch: ${{ github.event.ref }}
       secrets: inherit
   ```
 - **Steps**:

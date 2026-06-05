@@ -208,8 +208,6 @@ name: Cleanup
 
 on:
   delete:
-  pull_request:
-    types: [closed]
 
 permissions:
   id-token: write
@@ -217,11 +215,11 @@ permissions:
 
 jobs:
   cleanup:
-    if: github.event_name == 'pull_request' || github.event.ref_type == 'branch'
+    if: github.event.ref_type == 'branch'
     uses: ${PLATFORM_REPO}/.github/workflows/cleanup-branch.yml@main
     with:
       app-slug: ${APP_SLUG}
-      branch: \${{ github.event.ref_name || github.head_ref }}
+      branch: \${{ github.event.ref }}
     secrets: inherit
 EOF
 

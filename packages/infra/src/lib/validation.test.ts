@@ -11,6 +11,7 @@ describe('sanitizeBranchName', () => {
     expect(sanitizeBranchName('feature/login')).toBe('feature-login');
     expect(sanitizeBranchName('Feature/New__UI')).toBe('feature-new-ui');
     expect(sanitizeBranchName('fix/bug...#123')).toBe('fix-bug-123');
+    expect(sanitizeBranchName('refs/heads/feature/login')).toBe('feature-login');
   });
 
   it('strips leading and trailing hyphens', () => {
