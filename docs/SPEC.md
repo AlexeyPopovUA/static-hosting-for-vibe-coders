@@ -144,11 +144,14 @@ The platform supports all common routing strategies without per-app configuratio
 - **Additional behaviors** (managed `CachingOptimized`): `*.js`, `*.css`, `*.png`, `*.jpg`, `*.svg`, `*.woff2` — each with the same viewer-request CloudFront Function
 - **Not mirrored as separate behaviors**: other `FILE_REGEX` types (e.g. `.jpeg`, `.gif`, `.ico`, `.woff`, `.ttf`, `.eot`) use the default short-TTL behavior
 
-**Origin `Cache-Control`** (browser caching):
+**Origin `Cache-Control`**:
 
-- CDK bootstrap uploads (global `404.html`, demo apps) set `max-age=0, s-maxage=300` (or `s-maxage=10` for global 404) via `BucketDeployment`
-- App-deployed content: set by each app's build output; there is **no** CloudFront response headers policy on the distribution today
-- **Recommended for app builds**: HTML `max-age=0, s-maxage=300`; static assets `max-age=31536000, immutable`
+- **Platform bootstrap only**: CDK `BucketDeployment` uploads (global `404.html`, in-repo demo apps) set `max-age=0, s-maxage=300` (or `s-maxage=10` for global 404)
+- **External app deploys**: `deploy-app.yml` uses `aws s3 sync` with **no** `--cache-control` — objects keep S3 defaults unless an app sets metadata itself
+- **Not required for freshness**: shared deploy workflows call `aws cloudfront create-invalidation` after every sync (`/{app}/{branch}/*` + `/{app}/404.html`). Edge cache busting is **invalidation-driven**, not S3 `Cache-Control`-driven
+- **Do not recommend** per-app `Cache-Control` in build output for this platform — it is redundant with deploy-time invalidation and easy to get wrong (e.g. long TTL on fixed filenames like `styles.css` without invalidation)
+- **Edge TTL policies** (above) still apply **between deploys** if invalidation is skipped or manual uploads bypass CI
+- **No** CloudFront response headers policy on the distribution today
 
 **Error handling split**:
 
@@ -158,6 +161,8 @@ The platform supports all common routing strategies without per-app configuratio
 **Not configured yet**: explicit low TTL for cached `403/404` at the edge (rely on invalidation after deploy)
 
 **Invalidation**: `/{app}/{mainBranchName}/*` + `/{app}/404.html` (production) or `/{app}/{branch}/*` + `/{app}/404.html` (branch). Global fallback: `/404.html` separately when needed
+
+**Deploy-driven invalidation** (primary update path): every `deploy-app.yml` run invalidates the deployed branch prefix after `s3 sync`. Active feature-branch iteration therefore updates previews **per push**, not on a fixed TTL schedule. `cleanup-branch.yml` invalidates the removed branch prefix once on delete/PR close.
 
 ---
 
@@ -620,7 +625,7 @@ Use these for smoke tests after first deploy (see `README.md`). Real apps deploy
 
 - **Basic auth with Lambda@Edge**: Requires Lambda@Edge (origin-request), DynamoDB/SSM for credentials
 - **Multi-environment**: Single stack for now; `Environment` tag exists but separate stacks per env are not implemented
-- **CloudFront response headers policy**: Per-app `Cache-Control` at the edge (apps set headers at build time today)
+- **CloudFront response headers policy**: Optional edge `Cache-Control` overrides (not needed today — deploy workflows invalidate after upload)
 - **Observability**: CloudWatch alarms for Lambda@Edge errors, S3 access logging, CloudFront access logs
 
 ---
