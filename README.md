@@ -1,5 +1,7 @@
 # Static Hosting for Vibe Coders
 
+![One platform, many static demo apps — shared CloudFront and S3](docs/static-hosting-platform-hero.png)
+
 Multi-app static hosting on AWS with branch preview URLs. One S3 bucket and one CloudFront distribution serve every app; each app repo deploys via a reusable GitHub Actions workflow.
 
 Full specification: [docs/SPEC.md](docs/SPEC.md)
