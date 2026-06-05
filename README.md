@@ -4,6 +4,8 @@
 
 Multi-app static hosting on AWS with branch preview URLs. One S3 bucket and one CloudFront distribution serve every app; each app repo deploys via a reusable GitHub Actions workflow.
 
+**Read the write-up:** [Static hosting for vibe coders: one platform, many demo apps](https://oleksiipopov.com/blog/static-hosting-for-vibe-coders/) — architecture, requirements, and how external app repos plug in.
+
 Full specification: [docs/SPEC.md](docs/SPEC.md)
 
 ## Architecture
